@@ -19,10 +19,13 @@ import { ApplicationShell } from '../../client/common/application/applicationShe
 import { IApplicationShell } from '../../client/common/application/types';
 import { Cancellation, CancellationError } from '../../client/common/cancellation';
 import { EXTENSION_ROOT_DIR } from '../../client/common/constants';
+import { ProductNames } from '../../client/common/installer/productNames';
 import { traceError, traceInfo } from '../../client/common/logger';
 import { IFileSystem } from '../../client/common/platform/types';
 import { IProcessServiceFactory, IPythonExecutionFactory, Output } from '../../client/common/process/types';
+import { Product } from '../../client/common/types';
 import { createDeferred, waitForPromise } from '../../client/common/utils/async';
+import { Common, DataScience } from '../../client/common/utils/localize';
 import { noop } from '../../client/common/utils/misc';
 import { Architecture } from '../../client/common/utils/platform';
 import { Identifiers } from '../../client/datascience/constants';
@@ -1174,6 +1177,7 @@ plt.show()`,
         const factory = ioc.serviceManager.get<IPythonExecutionFactory>(IPythonExecutionFactory);
         const service = await factory.create({ pythonPath });
         const mockService = service as MockPythonService;
+        // Used by commands (can be removed when `src/client/datascience/jupyter/interpreter/jupyterCommand.ts` is deleted).
         mockService.addExecResult(['-m', 'jupyter', 'notebook', '--version'], () => {
             return Promise.resolve({
                 stdout: '9.9.9.9',
@@ -1181,12 +1185,18 @@ plt.show()`,
             });
         });
 
+        // Used by commands (can be removed when `src/client/datascience/jupyter/interpreter/jupyterCommand.ts` is deleted).
         mockService.addExecResult(['-m', 'notebook', '--version'], () => {
             return Promise.resolve({
                 stdout: '',
                 stderr: 'Not supported'
             });
         });
+        // For new approach.
+        when(ioc.mockJupyter?.productInstaller.isInstalled(Product.jupyter)).thenResolve(false as any);
+        when(ioc.mockJupyter?.productInstaller.isInstalled(Product.notebook)).thenResolve(false as any);
+        when(ioc.mockJupyter?.productInstaller.isInstalled(Product.jupyter, anything())).thenResolve(false as any);
+        when(ioc.mockJupyter?.productInstaller.isInstalled(Product.notebook, anything())).thenResolve(false as any);
     }
 
     test('Notebook launch failure', async function() {
@@ -1212,7 +1222,13 @@ plt.show()`,
                 await jupyterExecution.connectToNotebookServer({ usingDarkTheme: false, useDefaultConfig: true, workingDir: testDir, purpose: '1' });
             } catch (e) {
                 threw = true;
-                assert.ok(e.message.includes('Not supported'), `Wrong error thrown when notebook is created. Error is ${e.message}`);
+                // When using old command finder, the error is `Not Supported` (directly from stdout). - can be deprecated when jupyterCommandFinder.ts is deleted.
+                // When using new approach, we inform user that some packages are not installed.
+                const expectedErrorMsg = DataScience.libraryRequiredToLaunchJupyterNotInstalled().format(
+                    [ProductNames.get(Product.jupyter), ProductNames.get(Product.notebook)].join(` ${Common.and()} `)
+                );
+
+                assert.ok(e.message.includes('Not supported') || e.message.includes(expectedErrorMsg), `Wrong error thrown when notebook is created. Error is ${e.message}`);
             }
 
             assert.ok(threw, 'No exception thrown during notebook creation');
